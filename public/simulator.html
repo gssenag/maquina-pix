@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Máquina Pix — Simulador do Kiosk</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0d1117; color: #e6edf3; max-width: 900px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; } h2 { font-size: 16px; color: #8b949e; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px; }
+  button { background: #238636; color: #fff; border: 0; border-radius: 6px; padding: 8px 12px; margin: 4px 2px; cursor: pointer; font-size: 14px; }
+  button.warn { background: #9e6a03; } button.ghost { background: #30363d; }
+  input, select { background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 8px; width: 100px; }
+  #log { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 10px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; }
+  .ok { color: #3fb950; } .err { color: #f85149; } .info { color: #58a6ff; }
+</style>
+</head>
+<body>
+<h1>🛠️ Máquina Pix — Simulador do Kiosk <span class="info">(KIOSK-001)</span></h1>
+
+<div class="grid">
+  <div class="card">
+    <h2>1. DEPÓSITO (dinheiro → Pix)</h2>
+    <p>CPF: <input id="depCpf" value="12345678901"> Nome: <input id="depName" value="João da Silva" style="width:150px"></p>
+    <p>Chave Pix do cliente: <input id="depKey" value="11999999999"></p>
+    <button onclick="startDeposit()">▶ Iniciar sessão</button>
+    <button class="ghost" onclick="insertNote(50)">+ Cédula R$50</button>
+    <button class="ghost" onclick="insertNote(100)">+ Cédula R$100</button>
+    <p class="info" id="depState">aguardando…</p>
+  </div>
+
+  <div class="card">
+    <h2>2. SAQUE (Pix → dinheiro)</h2>
+    <p>Valor: R$ <input id="wdAmount" value="50" type="number"></p>
+    <button onclick="startWithdraw()">▶ Iniciar sessão + gerar QR</button>
+    <p class="info" id="wdState">aguardando…</p>
+    <div id="qrbox" style="margin-top:8px"></div>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  </div>
+
+  <div class="card">
+    <h2>3. WEBHOOK PSP (simula liquidação do Pix)</h2>
+    <p>Assinado com HMAC — o backend valida tudo.</p>
+    <button class="warn" onclick="fireWebhook()">⚡ Confirmar PIX LIQUIDADA</button>
+    <button class="warn" onclick="fireWebhook(true)">⚡ Repetir (teste de idempotência)</button>
+    <p class="info" id="whState">—</p>
+  </div>
+
+  <div class="card">
+    <h2>4. COMANDOS DA MÁQUINA (polling)</h2>
+    <button class="ghost" onclick="pollCommands()">📡 Buscar comandos</button>
+    <button onclick="confirmDispense()">✅ Cédula entregue (sensor OK)</button>
+    <p class="info" id="cmdState">—</p>
+  </div>
+</div>
+
+<div class="card">
+  <h2>5. CAOS (testes de resiliência)</h2>
+  <button class="warn" onclick="toggleOffline()" id="offBtn">🔌 Máquina OFFLINE</button>
+  <p class="info">Para o heartbeat — o painel deve alertar MÁQUINA OFFLINE em até 60s.</p>
+</div>
+
+<h2>Log</h2>
+<div id="log"></div>
+
+<script>
+const API = '';
+const MACHINE = 'KIOSK-001';
+let depSession = null, wdSession = null, noteBuffer = 0;
+
+function log(msg, cls='info') {
+  const el = document.getElementById('log');
+  el.innerHTML += `<span class="${cls}">[${new Date().toLocaleTimeString()}] ${msg}</span>\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+async function api(path, body) {
+  const r = await fetch(API + path, { method: body ? 'POST' : 'GET', headers: {'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json();
+  log(`${path} → ${r.status} ${JSON.stringify(j)}`, r.ok ? 'ok' : 'err');
+  return j;
+}
+
+async function startDeposit() {
+  const r = await fetch('/api/kiosk/session/start', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ type:'DEPOSIT', machineId: MACHINE, pixKey: document.getElementById('depKey').value,
+      cpf: document.getElementById('depCpf').value, clientName: document.getElementById('depName').value }) });
+  const j = await r.json();
+  if (!r.ok) {
+    document.getElementById('depState').textContent = '⛔ ' + (j.error || 'recusado');
+    return;
+  }
+  depSession = j.sessionId; noteBuffer = 0;
+  document.getElementById('depState').textContent = 'Sessão ' + depSession + ' — insira cédulas';
+}
+
+async function insertNote(v) {
+  if (!depSession) return log('Inicie a sessão de depósito primeiro', 'err');
+  noteBuffer += v * 100;
+  document.getElementById('depState').textContent = `Contado: R$ ${(noteBuffer/100).toFixed(2)} — enviando ao backend…`;
+  const j = await api('/api/kiosk/notes-counted', { sessionId: depSession, amountCents: noteBuffer });
+  document.getElementById('depState').textContent = 'Pix disparado ao cliente! txid: ' + (j.txid||'');
+}
+
+async function startWithdraw() {
+  const cents = Math.round(parseFloat(document.getElementById('wdAmount').value) * 100);
+  const j = await api('/api/kiosk/session/start', { type:'WITHDRAW', machineId: MACHINE, amountCents: cents });
+  wdSession = j.sessionId;
+  document.getElementById('wdState').textContent = 'QR gerado — cliente pagando… txid: ' + (j.txid||'');
+  const box = document.getElementById('qrbox');
+  box.innerHTML = '';
+  if (j.qrText) {
+    const div = document.createElement('div');
+    box.appendChild(div);
+    try { new QRCode(div, { text: j.qrText, width: 180, height: 180 }); }
+    catch { box.textContent = j.qrText; }
+    const p = document.createElement('p');
+    p.style.cssText = 'font-size:10px;word-break:break-all;color:#8b949e;margin:6px 0 0';
+    p.textContent = j.qrText;
+    box.appendChild(p);
+  }
+}
+
+async function fireWebhook(dup=false) {
+  const s = wdSession || depSession;
+  if (!s) return log('Inicie uma sessão primeiro', 'err');
+  const payload = {
+    event: 'pix.received',
+    id: dup ? window.__lastEvt : (window.__lastEvt = 'evt_' + Date.now()),
+    timestamp: new Date().toISOString(),
+    data: { sessionId: s, status: 'LIQUIDADA', endToEndId: 'E1234567820261001' + Math.random().toString(36).slice(2,8), amount: 0 }
+  };
+  const raw = JSON.stringify(payload);
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode('dev-secret-sandbox'), {name:'HMAC', hash:'SHA-256'}, false, ['sign']);
+
+  const sigBytes = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(raw)));
+  const sigHex = [...sigBytes].map(b=>b.toString(16).padStart(2,'0')).join('');
+  const r = await fetch('/webhook/psp', { method:'POST', headers: {'Content-Type':'application/json','X-Webhook-Signature': sigHex}, body: raw });
+  const j = await r.json();
+  log(`webhook ${payload.id} → ${r.status} ${JSON.stringify(j)}`, r.ok ? 'ok' : 'err');
+  document.getElementById('whState').textContent = 'Resposta: ' + JSON.stringify(j);
+}
+
+async function pollCommands() {
+  const j = await api('/api/kiosk/commands/' + MACHINE);
+  const cmds = j.commands || [];
+  document.getElementById('cmdState').textContent = cmds.length ? 'RECEBI: ' + JSON.stringify(cmds) : 'nenhum comando pendente';
+  if (cmds.length) window.__pendingDispense = cmds[0];
+}
+
+async function confirmDispense() {
+  if (!window.__pendingDispense) return log('Sem comando de dispensa pendente', 'err');
+  const j = await api('/api/kiosk/dispensed', { sessionId: window.__pendingDispense.sessionId, sensorOk: true });
+  window.__pendingDispense = null;
+}
+
+// Heartbeat a cada 20s (pausável pelo modo offline)
+let heartbeatTimer = setInterval(() => api('/api/kiosk/heartbeat', { machineId: MACHINE, cashNotes: {'50': 20, '100': 5} }), 20000);
+let offline = false;
+function toggleOffline() {
+  offline = !offline;
+  document.getElementById('offBtn').textContent = offline ? '🔌 MÁQUINA ONLINE (retomar)' : '🔌 Máquina OFFLINE';
+  if (offline) { clearInterval(heartbeatTimer); log('Heartbeat PARADO — máquina simulada offline', 'err'); }
+  else { heartbeatTimer = setInterval(() => api('/api/kiosk/heartbeat', { machineId: MACHINE, cashNotes: {'50': 20, '100': 5} }), 20000); log('Heartbeat retomado', 'ok'); }
+}
+log('Simulador pronto. Fluxo: 1) iniciar + inserir cédulas OU 2) saque + QR → 3) webhook liquidada → 4) buscar comando + confirmar entrega.');
+</script>
+</body>
+</html>

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Máquina Pix — Painel</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0d1117; color: #e6edf3; max-width: 1100px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; }
+  .cards { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px; min-width: 170px; flex: 1; }
+  .card .label { color: #8b949e; font-size: 12px; text-transform: uppercase; }
+  .card .value { font-size: 26px; font-weight: 700; margin-top: 4px; }
+  .neg { color: #f85149; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .box { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; }
+  .box h2 { font-size: 14px; color: #8b949e; margin: 0 0 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td, th { padding: 4px 6px; border-bottom: 1px solid #21262d; text-align: left; }
+  .alert { background: #3d1418; border: 1px solid #f85149; color: #ffb1ae; border-radius: 6px; padding: 8px 10px; margin: 4px 0; font-size: 13px; }
+  .empty { color: #484f58; font-size: 13px; }
+  .pill { display: inline-block; border-radius: 10px; padding: 1px 8px; font-size: 11px; background: #30363d; }
+  .pill.ok { background: #1f4d29; color: #3fb950; }
+  .pill.bad { background: #4a1d22; color: #f85149; }
+  .pill.warn { background: #4a380a; color: #d29922; }
+  button { background: #21262d; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 3px 10px; cursor: pointer; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>📊 Máquina Pix — Painel de Operação</h1>
+<div class="cards">
+  <div class="card"><div class="label">Cofre físico</div><div class="value" id="cash">—</div></div>
+  <div class="card"><div class="label">Saldo digital (PSP)</div><div class="value" id="digital">—</div></div>
+  <div class="card"><div class="label">Sessões ativas</div><div class="value" id="actives">—</div></div>
+  <div class="card"><div class="label">Clientes hoje</div><div class="value" id="clients">—</div></div>
+</div>
+<div id="alerts"></div>
+<div class="grid">
+  <div class="box">
+    <h2>Sessões ao vivo</h2>
+    <table id="sessions"><thead><tr><th>ID</th><th>Tipo</th><th>Valor</th><th>Estado</th></tr></thead><tbody></tbody></table>
+  </div>
+  <div class="box">
+    <h2>Últimos lançamentos (ledger)</h2>
+    <table id="ledger"><thead><tr><th>#</th><th>Tipo</th><th>Cofre</th><th>Digital</th></tr></thead><tbody></tbody></table>
+  </div>
+  <div class="box">
+    <h2>Clientes (KYC) — limite diário por CPF</h2>
+    <table id="kyc"><thead><tr><th>CPF</th><th>Nome</th><th>Depositado hoje</th><th>Status</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
+  <div class="box">
+    <h2>Bloquear cliente (compliance)</h2>
+    <p style="font-size:13px;color:#8b949e">Suspeita de lavagem/golpe: bloqueia o CPF na hora.</p>
+    <input id="blockCpf" placeholder="CPF (11 dígitos)" style="background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;width:180px">
+    <button onclick="blockClient()">Bloquear</button>
+  </div>
+</div>
+<script>
+const fmt = c => (c/100).toLocaleString('pt-BR', {style:'currency', currency:'BRL'});
+const stPill = st => st === 'DONE' ? 'ok' : st === 'FAILED' ? 'bad' : 'warn';
+
+async function refresh() {
+  try {
+    const d = await (await fetch('/api/panel/overview')).json();
+    document.getElementById('cash').textContent = fmt(d.balances.cashCents);
+    const dg = document.getElementById('digital');
+    dg.textContent = fmt(d.balances.digitalCents);
+    dg.className = 'value ' + (d.balances.digitalCents < 0 ? 'neg' : '');
+    const act = d.sessions.filter(s => !['DONE','FAILED'].includes(s.state));
+    document.getElementById('actives').textContent = act.length;
+    document.getElementById('clients').textContent = d.kycClients.length;
+
+    document.getElementById('alerts').innerHTML = d.alerts.map(a => `<div class="alert">⚠ ${a}</div>`).join('');
+
+    document.querySelector('#sessions tbody').innerHTML = d.sessions.slice(0, 10).map(s =>
+      `<tr><td>${s.id}</td><td>${s.type === 'DEPOSIT' ? 'Depósito' : 'Saque'}</td><td>${s.amount != null ? fmt(s.amount) : '—'}</td><td><span class="pill ${stPill(s.state)}">${s.state}</span></td></tr>`
+    ).join('') || '<tr><td colspan="4" class="empty">nenhuma</td></tr>';
+
+    document.querySelector('#ledger tbody').innerHTML = [...d.events].reverse().map(e =>
+      `<tr><td>${e.id}</td><td>${e.type}</td><td>${e.cash ? fmt(e.cash) : '—'}</td><td>${e.digital ? fmt(e.digital) : '—'}</td></tr>`
+    ).join('') || '<tr><td colspan="4" class="empty">vazio</td></tr>';
+
+    document.querySelector('#kyc tbody').innerHTML = d.kycClients.map(c =>
+      `<tr><td>${c.cpf}</td><td>${c.name || '—'}</td><td>${fmt(c.usedToday)} / ${fmt(d.kycDailyLimit)}</td>
+       <td><span class="pill ${c.blocked ? 'bad' : 'ok'}">${c.blocked ? 'BLOQUEADO' : 'OK'}</span></td>
+       <td><button onclick="toggle('${c.cpf}', ${!c.blocked})">${c.blocked ? 'Desbloquear' : 'Bloquear'}</button></td></tr>`
+    ).join('') || '<tr><td colspan="5" class="empty">nenhum cliente ainda</td></tr>';
+  } catch (e) { console.error(e); }
+}
+
+async function blockClient() {
+  const cpf = document.getElementById('blockCpf').value;
+  await fetch('/api/panel/kyc/block', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ cpf, blocked: true }) });
+  refresh();
+}
+
+async function toggle(cpfMasked, blocked) {
+  const full = prompt('Confirme o CPF completo (11 dígitos):');
+  if (!full) return;
+  await fetch('/api/panel/kyc/block', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ cpf: full, blocked }) });
+  refresh();
+}
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

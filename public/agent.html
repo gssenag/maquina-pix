@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Agente — Máquina Pix</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, sans-serif; }
+  body { background: #0d1117; color: #e6edf3; padding: 16px; max-width: 480px; margin: 0 auto; }
+  h1 { font-size: 1.1rem; margin-bottom: 4px; }
+  .sub { color: #8b949e; font-size: .8rem; margin-bottom: 16px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+  .btn { display: block; width: 100%; padding: 16px; border: 0; border-radius: 10px; font-size: 1.05rem; font-weight: 600; margin-top: 10px; cursor: pointer; }
+  .primary { background: #238636; color: #fff; }
+  .warn { background: #b62324; color: #fff; }
+  .ghost { background: #21262d; color: #e6edf3; border: 1px solid #30363d; }
+  .row { display: flex; gap: 10px; }
+  .row .btn { margin-top: 10px; }
+  label { display: block; font-size: .78rem; color: #8b949e; margin: 12px 0 4px; }
+  input, select { width: 100%; padding: 14px; border-radius: 10px; border: 1px solid #30363d; background: #0d1117; color: #e6edf3; font-size: 1rem; }
+  .big { font-size: 1.6rem; font-weight: 700; color: #7ee787; }
+  #qrbox { display: flex; justify-content: center; margin: 14px 0; background: #fff; padding: 12px; border-radius: 12px; }
+  .pix-copy { word-break: break-all; font-size: .7rem; color: #8b949e; text-align: center; margin-top: 6px; }
+  .state { display: inline-block; background: #1f6feb33; color: #79c0ff; padding: 3px 10px; border-radius: 99px; font-size: .75rem; font-weight: 600; }
+  .hidden { display: none; }
+  .step-label { font-size: .85rem; color: #e6edf3; margin-top: 12px; line-height: 1.5; }
+  .msg { font-size: .9rem; color: #ffa657; margin-top: 10px; line-height: 1.4; }
+  .ok { color: #7ee787; }
+</style>
+</head>
+<body>
+  <h1>🤝 Painel do Agente</h1>
+  <div class="sub">Modo assistido — você opera o balcão, o backend controla tudo</div>
+
+  <div id="home">
+    <div class="card">
+      <div class="step-label">Qual operação?</div>
+      <button class="btn primary" onclick="startWithdraw()">💵 SAQUE — cliente paga Pix, você entrega cédula</button>
+      <button class="btn ghost" onclick="showDeposit()">📱 DEPÓSITO — cliente entrega cédula, você envia Pix</button>
+      <button class="btn ghost" onclick="showBill()">📄 PAGAR BOLETO — cliente paga em dinheiro</button>
+      <button class="btn ghost" onclick="showTopup()">🔋 RECARGA DE CELULAR — cliente paga em dinheiro</button>
+    </div>
+    <div class="card">
+      <a href="/panel" style="color:#79c0ff;font-size:.85rem">📊 Ver painel de monitoramento →</a>
+    </div>
+  </div>
+
+  <!-- ===================== SAQUE ===================== -->
+  <div id="withdraw" class="hidden">
+    <div class="card">
+      <span class="state" id="wdState">SAQUE</span>
+      <label>Valor que o cliente quer sacar (R$)</label>
+      <input id="wdAmount" type="number" inputmode="decimal" placeholder="Ex: 50">
+      <label>Como o cliente vai pagar?</label>
+      <div class="row">
+        <button id="wdBPix" class="btn primary" onclick="wdChoose('pix')">📱 Pix</button>
+        <button id="wdBCard" class="btn ghost" onclick="wdChoose('card')">💳 Cartão</button>
+      </div>
+      <div class="step-label" id="wdFeeInfo"></div>
+      <button class="btn primary" onclick="wdStart()">Gerar cobrança</button>
+    </div>
+    <div id="wdQr" class="card hidden">
+      <div class="step-label" id="wdQrTitle">1️⃣ Mostre o QR pro cliente pagar:</div>
+      <div class="big" id="wdCharge"></div>
+      <div id="qrbox"></div>
+      <div class="pix-copy" id="pixCode"></div>
+      <a id="wdOpenLink" class="hidden" style="display:block;text-align:center;color:#79c0ff;margin-top:8px;font-size:.85rem" href="#" target="_blank">🔗 Abrir link de pagamento</a>
+      <div class="step-label" id="wdWaitMsg">2️⃣ Aguardando pagamento… o painel avança sozinho quando cair.</div>
+      <button class="btn primary" onclick="wdConfirmPix()">✅ Confirmado (vi no app)</button>
+      <div class="msg">O painel detecta o pagamento sozinho (webhook). O botão é só pra confirmar manualmente, se preferir.</div>
+    </div>
+    <div id="wdDeliver" class="card hidden">
+      <div class="step-label">3️⃣ Pix confirmado. Entregue ao cliente:</div>
+      <div class="big" id="wdDeliverAmount"></div>
+      <button class="btn primary" onclick="wdDelivered()">💵 Cédula entregue</button>
+      <button class="btn warn" onclick="wdProblem()">⚠️ Não consigo entregar</button>
+    </div>
+    <button class="btn ghost" onclick="reset()">↩ Voltar</button>
+  </div>
+
+  <!-- ===================== DEPÓSITO ===================== -->
+  <div id="deposit" class="hidden">
+    <div class="card">
+      <span class="state" id="dpState">DEPÓSITO</span>
+      <label>CPF do cliente (KYC — limite diário)</label>
+      <input id="dpCpf" placeholder="000.000.000-00">
+      <label>Nome do cliente (opcional)</label>
+      <input id="dpName" placeholder="Nome">
+      <label>Chave Pix do cliente</label>
+      <input id="dpKey" placeholder="CPF, telefone, e-mail ou aleatória">
+      <button class="btn primary" onclick="dpStart()">Iniciar depósito</button>
+    </div>
+    <div id="dpCount" class="card hidden">
+      <div class="step-label">1️⃣ Conte as cédulas que o cliente entregou:</div>
+      <label>Total recebido (R$)</label>
+      <input id="dpAmount" type="number" inputmode="decimal" placeholder="Ex: 100">
+      <button class="btn primary" onclick="dpNotes()">💵 Notas contadas</button>
+    </div>
+    <div id="dpSend" class="card hidden">
+      <div class="step-label">2️⃣ Envie o Pix pelo seu app PSP:</div>
+      <div class="big" id="dpSendAmount"></div>
+      <div class="step-label" id="dpSendKey"></div>
+      <button class="btn primary" onclick="dpConfirm()">✅ Pix enviado</button>
+      <button class="btn warn" onclick="dpProblem()">⚠️ Não consegui enviar (devolver cédulas)</button>
+    </div>
+    <button class="btn ghost" onclick="reset()">↩ Voltar</button>
+  </div>
+
+  <!-- ===================== BOLETO ===================== -->
+  <div id="bill" class="hidden">
+    <div class="card">
+      <span class="state" id="blState">BOLETO</span>
+      <label>Linha digitável do boleto</label>
+      <input id="blLine" placeholder="Digite ou leia o código de barras">
+      <button class="btn primary" onclick="blStart()">Iniciar pagamento</button>
+    </div>
+    <div id="blCount" class="card hidden">
+      <div class="step-label">1️⃣ Cliente entregou as cédulas. Total recebido (R$):</div>
+      <input id="blAmount" type="number" inputmode="decimal" placeholder="Valor do boleto">
+      <button class="btn primary" onclick="blNotes()">💵 Notas contadas</button>
+    </div>
+    <div id="blPay" class="card hidden">
+      <div class="step-label">2️⃣ Pague o boleto no app do seu PSP:</div>
+      <div class="big" id="blPayAmount"></div>
+      <div class="step-label" id="blPayLine"></div>
+      <button class="btn primary" onclick="svcConfirm()">✅ Boleto pago</button>
+      <button class="btn warn" onclick="svcFail()">⚠️ Não consegui pagar (devolver)</button>
+    </div>
+    <button class="btn ghost" onclick="reset()">↩ Voltar</button>
+  </div>
+
+  <!-- ===================== RECARGA ===================== -->
+  <div id="topup" class="hidden">
+    <div class="card">
+      <span class="state" id="tpState">RECARGA</span>
+      <label>Telefone do cliente</label>
+      <input id="tpPhone" placeholder="(75) 99999-9999">
+      <label>Valor da recarga (R$)</label>
+      <input id="tpValue" type="number" inputmode="decimal" placeholder="Ex: 20">
+      <button class="btn primary" onclick="tpStart()">Iniciar recarga</button>
+    </div>
+    <div id="tpCount" class="card hidden">
+      <div class="step-label">1️⃣ Cliente entregou as cédulas. Total recebido (R$):</div>
+      <input id="tpAmount" type="number" inputmode="decimal" placeholder="Valor combinado">
+      <button class="btn primary" onclick="tpNotes()">💵 Notas contadas</button>
+    </div>
+    <div id="tpPay" class="card hidden">
+      <div class="step-label">2️⃣ Faça a recarga no app do seu PSP:</div>
+      <div class="big" id="tpPayAmount"></div>
+      <div class="step-label" id="tpPayPhone"></div>
+      <button class="btn primary" onclick="svcConfirm()">✅ Recarga efetivada</button>
+      <button class="btn warn" onclick="svcFail()">⚠️ Não consegui recarregar (devolver)</button>
+    </div>
+    <button class="btn ghost" onclick="reset()">↩ Voltar</button>
+  </div>
+
+  <div id="done" class="hidden card">
+    <div class="step-label ok" id="doneMsg">✔ Operação concluída</div>
+    <button class="btn primary" onclick="reset()">Nova operação</button>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js">// ---------- BOLETO ----------
+function showBill() { show('bill'); }
+async function blStart() {
+  const billLine = $('blLine').value.replace(/[^0-9]/g, '');
+  if (billLine.length < 40) return fail('Linha digitável inválida');
+  const j = await api('/api/kiosk/session/start', { type: 'BILL', machineId: 'AGENTE-BALCAO', billLine });
+  if (j.error) return fail(j.error);
+  session = j.sessionId;
+  $('blCount').classList.remove('hidden');
+}
+async function blNotes() {
+  const amountCents = Math.round(parseFloat($('blAmount').value || '0') * 100);
+  if (!amountCents) return fail('Informe o valor recebido');
+  const j = await api('/api/kiosk/notes-counted', { sessionId: session, amountCents });
+  if (j.error) return fail(j.error);
+  if (j.refused) return fail('Limite excedido — devolva as cédulas');
+  $('blPay').classList.remove('hidden');
+  $('blPayAmount').textContent = 'R$ ' + $('blAmount').value;
+  $('blPayLine').textContent = 'Boleto: ' + $('blLine').value.slice(0, 24) + '…';
+}
+// ---------- RECARGA ----------
+function showTopup() { show('topup'); }
+async function tpStart() {
+  const phone = $('tpPhone').value.replace(/\D/g, '');
+  const amountCents = Math.round(parseFloat($('tpValue').value || '0') * 100);
+  if (phone.length < 10) return fail('Telefone inválido');
+  if (!amountCents) return fail('Informe o valor da recarga');
+  const j = await api('/api/kiosk/session/start', { type: 'TOPUP', machineId: 'AGENTE-BALCAO', phone, amountCents });
+  if (j.error) return fail(j.error);
+  session = j.sessionId;
+  $('tpCount').classList.remove('hidden');
+}
+async function tpNotes() {
+  const amountCents = Math.round(parseFloat($('tpAmount').value || '0') * 100);
+  if (!amountCents) return fail('Informe o valor recebido');
+  const j = await api('/api/kiosk/notes-counted', { sessionId: session, amountCents });
+  if (j.error) return fail(j.error);
+  if (j.refused) return fail('Limite excedido — devolva as cédulas');
+  $('tpPay').classList.remove('hidden');
+  $('tpPayAmount').textContent = 'R$ ' + $('tpAmount').value;
+  $('tpPayPhone').textContent = 'Recarga pro telefone: ' + $('tpPhone').value;
+}
+// ---------- Confirmação genérica de serviço (boleto/recarga) ----------
+async function svcConfirm() {
+  const j = await api('/api/agent/confirm-pix', { sessionId: session });
+  if (j.error) return fail(j.error);
+  $('doneMsg').textContent = '✔ Serviço pago e registrado no ledger';
+  show('done');
+}
+async function svcFail() {
+  const j = await api('/api/agent/confirm-pix', { sessionId: session, fail: true });
+  $('doneMsg').textContent = '⚠ Pagamento NÃO efetuado — devolva as cédulas ao cliente.';
+  show('done');
+}
+</script>
+<script>
+let session = null;
+const $ = (id) => document.getElementById(id);
+
+function show(sec) {
+  ['home','withdraw','deposit','bill','topup','done'].forEach(i => $(i).classList.add('hidden'));
+  $(sec).classList.remove('hidden');
+}
+function reset() { stopPoll(); session = null; show('home'); }
+function fail(msg) { alert(msg); }
+
+async function api(path, body) {
+  const r = await fetch(path, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  return r.json();
+}
+
+// ---------- SAQUE ----------
+let wdMethod = 'pix';
+let pollTimer = null;
+function startWithdraw() { show('withdraw'); }
+function wdChoose(m) {
+  wdMethod = m;
+  $('wdBPix').className = 'btn ' + (m === 'pix' ? 'primary' : 'ghost');
+  $('wdBCard').className = 'btn ' + (m === 'card' ? 'primary' : 'ghost');
+  $('wdFeeInfo').textContent = m === 'card'
+    ? '💳 Cliente paga com cartão (débito) num checkout online seguro'
+    : '📱 Cliente paga com Pix escaneando o QR';
+}
+const brl = (c) => 'R$ ' + (c / 100).toFixed(2);
+async function wdStart() {
+  const amountCents = Math.round(parseFloat($('wdAmount').value || '0') * 100);
+  if (!amountCents) return fail('Informe o valor');
+  const j = await api('/api/kiosk/session/start', { type: 'WITHDRAW', machineId: 'AGENTE-BALCAO', amountCents, method: wdMethod });
+  if (j.error) return fail(j.error);
+  session = j.sessionId;
+  $('wdState').textContent = 'SAQUE — cobrança gerada';
+  $('wdQr').classList.remove('hidden');
+  $('wdCharge').textContent = 'Cliente paga ' + brl(j.totalCents) + ' (' + brl(j.amountCents) + ' + taxa ' + brl(j.feeCents) + ')';
+  const box = $('qrbox'); box.innerHTML = '';
+  const link = $('wdOpenLink');
+  if (wdMethod === 'card' && j.checkoutUrl) {
+    $('wdQrTitle').textContent = '1️⃣ Cliente abre o link e paga com cartão (débito):';
+    try { new QRCode(box, { text: j.checkoutUrl, width: 200, height: 200 }); } catch { box.textContent = j.checkoutUrl; }
+    $('pixCode').textContent = j.checkoutUrl;
+    link.href = j.checkoutUrl; link.classList.remove('hidden');
+  } else {
+    $('wdQrTitle').textContent = '1️⃣ Mostre o QR pro cliente pagar:';
+    try { new QRCode(box, { text: j.qrText, width: 200, height: 200 }); } catch { box.textContent = j.qrText; }
+    $('pixCode').textContent = j.qrText || '';
+    link.classList.add('hidden');
+  }
+  startPoll();
+}
+function startPoll() {
+  stopPoll();
+  pollTimer = setInterval(async () => {
+    try {
+      const j = await fetch('/api/session/' + session).then(r => r.json());
+      if (j.state === 'DISPENSING') { stopPoll(); wdShowDeliver('Pagamento confirmado automaticamente ✅'); }
+      else if (j.state === 'FAILED') { stopPoll(); $('doneMsg').textContent = '⚠ Sessão falhou/expirou'; show('done'); }
+    } catch {}
+  }, 2000);
+}
+function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+function wdShowDeliver(msg) {
+  $('wdQr').classList.add('hidden');
+  $('wdDeliver').classList.remove('hidden');
+  $('wdDeliverAmount').textContent = 'R$ ' + $('wdAmount').value;
+  if (msg) $('wdState').textContent = msg;
+}
+async function wdConfirmPix() {
+  const j = await api('/api/agent/confirm-pix', { sessionId: session });
+  if (j.error) return fail(j.error);
+  stopPoll();
+  wdShowDeliver();
+}
+async function wdDelivered() {
+  const j = await api('/api/kiosk/dispensed', { sessionId: session, sensorOk: true });
+  if (j.error) return fail(j.error);
+  $('doneMsg').textContent = '✔ Saque concluído — cédula entregue e registrada no ledger';
+  show('done');
+}
+async function wdProblem() {
+  const j = await api('/api/kiosk/dispensed', { sessionId: session, sensorOk: false });
+  $('doneMsg').textContent = '⚠ Saque FALHOU — cédula não entregue. Se o Pix caiu, reembolse o cliente pelo app e registre a reversão.';
+  show('done');
+}
+
+// ---------- DEPÓSITO ----------
+function showDeposit() { show('deposit'); }
+async function dpStart() {
+  const cpf = $('dpCpf').value.replace(/\D/g, '');
+  const pixKey = $('dpKey').value.trim();
+  if (cpf.length !== 11) return fail('CPF inválido (KYC obrigatório no depósito)');
+  if (!pixKey) return fail('Informe a chave Pix do cliente');
+  const j = await api('/api/kiosk/session/start', { type: 'DEPOSIT', machineId: 'AGENTE-BALCAO', pixKey, cpf, clientName: $('dpName').value || null });
+  if (j.error) return fail(j.error);
+  session = j.sessionId;
+  $('dpState').textContent = 'DEPÓSITO — aguardando cédulas';
+  $('dpCount').classList.remove('hidden');
+}
+async function dpNotes() {
+  const amountCents = Math.round(parseFloat($('dpAmount').value || '0') * 100);
+  if (!amountCents) return fail('Informe o total recebido');
+  const j = await api('/api/kiosk/notes-counted', { sessionId: session, amountCents });
+  if (j.error) return fail(j.error);
+  if (j.refused) return fail(j.message || 'Limite diário excedido — devolva as cédulas ao cliente');
+  $('dpSend').classList.remove('hidden');
+  $('dpSendAmount').textContent = 'R$ ' + $('dpAmount').value;
+  $('dpSendKey').textContent = 'Para a chave: ' + $('dpKey').value;
+  if (j.message) console.log(j.message);
+}
+async function dpConfirm() {
+  const j = await api('/api/agent/confirm-pix', { sessionId: session });
+  if (j.error) return fail(j.error);
+  $('doneMsg').textContent = '✔ Depósito concluído — Pix enviado e registrado no ledger';
+  show('done');
+}
+async function dpProblem() {
+  // Marca a sessão como falha — cédulas devolvidas ao cliente, ledger é revertido pelo backend
+  const j = await api('/api/agent/confirm-pix', { sessionId: session, fail: true }).catch(() => null);
+  $('doneMsg').textContent = '⚠ Pix NÃO enviado — devolva as cédulas ao cliente. Sessão marcada como falha.';
+  show('done');
+}
+// ---------- BOLETO ----------
+function showBill() { show('bill'); }
+async function blStart() {
+  const billLine = $('blLine').value.replace(/[^0-9]/g, '');
+  if (billLine.length < 40) return fail('Linha digitável inválida');
+  const j = await api('/api/kiosk/session/start', { type: 'BILL', machineId: 'AGENTE-BALCAO', billLine });
+  if (j.error) return fail(j.error);
+  session = j.sessionId;
+  $('blCount').classList.remove('hidden');
+}
+async function blNotes() {
+  const amountCents = Math.round(parseFloat($('blAmount').value || '0') * 100);
+  if (!amountCents) return fail('Informe o valor recebido');
+  const j = await api('/api/kiosk/notes-counted', { sessionId: session, amountCents });
+  if (j.error) return fail(j.error);
+  if (j.refused) return fail('Limite excedido — devolva as cédulas');
+  $('blPay').classList.remove('hidden');
+  $('blPayAmount').textContent = 'R$ ' + $('blAmount').value;
+  $('blPayLine').textContent = 'Boleto: ' + $('blLine').value.slice(0, 24) + '…';
+}
+// ---------- RECARGA ----------
+function showTopup() { show('topup'); }
+async function tpStart() {
+  const phone = $('tpPhone').value.replace(/\D/g, '');
+  const amountCents = Math.round(parseFloat($('tpValue').value || '0') * 100);
+  if (phone.length < 10) return fail('Telefone inválido');
+  if (!amountCents) return fail('Informe o valor da recarga');
+  const j = await api('/api/kiosk/session/start', { type: 'TOPUP', machineId: 'AGENTE-BALCAO', phone, amountCents });
+  if (j.error) return fail(j.error);
+  session = j.sessionId;
+  $('tpCount').classList.remove('hidden');
+}
+async function tpNotes() {
+  const amountCents = Math.round(parseFloat($('tpAmount').value || '0') * 100);
+  if (!amountCents) return fail('Informe o valor recebido');
+  const j = await api('/api/kiosk/notes-counted', { sessionId: session, amountCents });
+  if (j.error) return fail(j.error);
+  if (j.refused) return fail('Limite excedido — devolva as cédulas');
+  $('tpPay').classList.remove('hidden');
+  $('tpPayAmount').textContent = 'R$ ' + $('tpAmount').value;
+  $('tpPayPhone').textContent = 'Recarga pro telefone: ' + $('tpPhone').value;
+}
+// ---------- Confirmação genérica de serviço (boleto/recarga) ----------
+async function svcConfirm() {
+  const j = await api('/api/agent/confirm-pix', { sessionId: session });
+  if (j.error) return fail(j.error);
+  $('doneMsg').textContent = '✔ Serviço pago e registrado no ledger';
+  show('done');
+}
+async function svcFail() {
+  const j = await api('/api/agent/confirm-pix', { sessionId: session, fail: true });
+  $('doneMsg').textContent = '⚠ Pagamento NÃO efetuado — devolva as cédulas ao cliente.';
+  show('done');
+}
+</script>
+</body>
+</html>

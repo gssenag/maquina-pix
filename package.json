@@ -1,0 +1,13 @@
+{
+  "name": "maquina-pix",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Máquina Pix — backend do ponto de atendimento (saque/depósito via Pix e cartão)",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
