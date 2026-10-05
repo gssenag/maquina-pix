@@ -145,6 +145,10 @@ async function createCharge({ amountCents, totalCents, sessionId }) {
       payment_method_id: 'pix',
       external_reference: sessionId,
       date_of_expiration: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      // MP exige payer preenchido mesmo pra Pix sem conta de cliente cadastrada.
+      payer: {
+        email: process.env.MP_PAYER_EMAIL || `cliente-${sessionId}@maquinapix.app`,
+      },
     });
     const td = (j.point_of_interaction && j.point_of_interaction.transaction_data) || {};
     return {
