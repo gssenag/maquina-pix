@@ -64,6 +64,7 @@
       <div class="big" id="wdCharge"></div>
       <div id="qrbox"></div>
       <div class="pix-copy" id="pixCode"></div>
+      <button class="btn primary" onclick="copyPixCode()">📋 Copiar código Pix</button>
       <a id="wdOpenLink" class="hidden" style="display:block;text-align:center;color:#79c0ff;margin-top:8px;font-size:.85rem" href="#" target="_blank">🔗 Abrir link de pagamento</a>
       <div class="step-label" id="wdWaitMsg">2️⃣ Aguardando pagamento… o painel avança sozinho quando cair.</div>
       <button class="btn primary" onclick="wdConfirmPix()">✅ Confirmado (vi no app)</button>
@@ -263,6 +264,21 @@ async function wdStart() {
     $('wdQrTitle').textContent = '1️⃣ Mostre o QR pro cliente pagar:';
     try { new QRCode(box, { text: j.qrText, width: 200, height: 200 }); } catch { box.textContent = j.qrText; }
     $('pixCode').textContent = j.qrText || '';
+    function copyPixCode() {
+      const t = document.getElementById('pixCode').textContent;
+      if (!t) return;
+      const done = () => { const b = document.querySelector('.btn.primary[onclick="copyPixCode()"]'); if (b) { const o = b.textContent; b.textContent = '✅ Código copiado!'; setTimeout(() => b.textContent = o, 2000); } };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done).catch(() => fallbackCopy(t, done));
+      else fallbackCopy(t, done);
+    }
+    function fallbackCopy(t, done) {
+      const ta = document.createElement('textarea');
+      ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) { alert('Não deu pra copiar — selecione o código acima e copie manualmente'); }
+      document.body.removeChild(ta);
+    }
+
     link.classList.add('hidden');
   }
   startPoll();
