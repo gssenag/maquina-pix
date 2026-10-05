@@ -214,6 +214,25 @@ async function svcFail() {
   $('doneMsg').textContent = '⚠ Pagamento NÃO efetuado — devolva as cédulas ao cliente.';
   show('done');
 }
+
+function copyPixCode() {
+  const t = document.getElementById('pixCode').textContent;
+  if (!t) return;
+  const done = () => { const b = document.querySelector('button[onclick="copyPixCode()"]'); if (b) { const o = b.textContent; b.textContent = '✅ Código copiado!'; setTimeout(() => b.textContent = o, 2000); } };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(t).then(done).catch(() => fallbackCopy(t, done));
+  } else fallbackCopy(t, done);
+}
+function fallbackCopy(t, done) {
+  const ta = document.createElement('textarea');
+  ta.value = t; ta.style.position = 'fixed'; ta.style.top = '0'; ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) {}
+  document.body.removeChild(ta);
+  if (ok) done(); else window.prompt('Copie o código abaixo (segure e selecione):', t);
+}
 </script>
 <script>
 let session = null;
@@ -264,21 +283,6 @@ async function wdStart() {
     $('wdQrTitle').textContent = '1️⃣ Mostre o QR pro cliente pagar:';
     try { new QRCode(box, { text: j.qrText, width: 200, height: 200 }); } catch { box.textContent = j.qrText; }
     $('pixCode').textContent = j.qrText || '';
-    function copyPixCode() {
-      const t = document.getElementById('pixCode').textContent;
-      if (!t) return;
-      const done = () => { const b = document.querySelector('.btn.primary[onclick="copyPixCode()"]'); if (b) { const o = b.textContent; b.textContent = '✅ Código copiado!'; setTimeout(() => b.textContent = o, 2000); } };
-      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done).catch(() => fallbackCopy(t, done));
-      else fallbackCopy(t, done);
-    }
-    function fallbackCopy(t, done) {
-      const ta = document.createElement('textarea');
-      ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
-      document.body.appendChild(ta); ta.select();
-      try { document.execCommand('copy'); done(); } catch (e) { alert('Não deu pra copiar — selecione o código acima e copie manualmente'); }
-      document.body.removeChild(ta);
-    }
-
     link.classList.add('hidden');
   }
   startPoll();
