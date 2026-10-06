@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>Agente — Máquina Pix — painel v4</title>
+<title>Agente — Máquina Pix — painel v5</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, sans-serif; }
   body { background: #0d1117; color: #e6edf3; padding: 16px; max-width: 480px; margin: 0 auto; }
@@ -161,60 +161,9 @@
     <button class="btn primary" onclick="reset()">Nova operação</button>
   </div>
 
-<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js">// ---------- BOLETO ----------
-function showBill() { show('bill'); }
-async function blStart() {
-  const billLine = $('blLine').value.replace(/[^0-9]/g, '');
-  if (billLine.length < 40) return fail('Linha digitável inválida');
-  const j = await api('/api/kiosk/session/start', { type: 'BILL', machineId: 'AGENTE-BALCAO', billLine });
-  if (j.error) return fail(j.error);
-  session = j.sessionId;
-  $('blCount').classList.remove('hidden');
-}
-async function blNotes() {
-  const amountCents = Math.round(parseFloat($('blAmount').value || '0') * 100);
-  if (!amountCents) return fail('Informe o valor recebido');
-  const j = await api('/api/kiosk/notes-counted', { sessionId: session, amountCents });
-  if (j.error) return fail(j.error);
-  if (j.refused) return fail('Limite excedido — devolva as cédulas');
-  $('blPay').classList.remove('hidden');
-  $('blPayAmount').textContent = 'R$ ' + $('blAmount').value;
-  $('blPayLine').textContent = 'Boleto: ' + $('blLine').value.slice(0, 24) + '…';
-}
-// ---------- RECARGA ----------
-function showTopup() { show('topup'); }
-async function tpStart() {
-  const phone = $('tpPhone').value.replace(/\D/g, '');
-  const amountCents = Math.round(parseFloat($('tpValue').value || '0') * 100);
-  if (phone.length < 10) return fail('Telefone inválido');
-  if (!amountCents) return fail('Informe o valor da recarga');
-  const j = await api('/api/kiosk/session/start', { type: 'TOPUP', machineId: 'AGENTE-BALCAO', phone, amountCents });
-  if (j.error) return fail(j.error);
-  session = j.sessionId;
-  $('tpCount').classList.remove('hidden');
-}
-async function tpNotes() {
-  const amountCents = Math.round(parseFloat($('tpAmount').value || '0') * 100);
-  if (!amountCents) return fail('Informe o valor recebido');
-  const j = await api('/api/kiosk/notes-counted', { sessionId: session, amountCents });
-  if (j.error) return fail(j.error);
-  if (j.refused) return fail('Limite excedido — devolva as cédulas');
-  $('tpPay').classList.remove('hidden');
-  $('tpPayAmount').textContent = 'R$ ' + $('tpAmount').value;
-  $('tpPayPhone').textContent = 'Recarga pro telefone: ' + $('tpPhone').value;
-}
-// ---------- Confirmação genérica de serviço (boleto/recarga) ----------
-async function svcConfirm() {
-  const j = await api('/api/agent/confirm-pix', { sessionId: session });
-  if (j.error) return fail(j.error);
-  $('doneMsg').textContent = '✔ Serviço pago e registrado no ledger';
-  show('done');
-}
-async function svcFail() {
-  const j = await api('/api/agent/confirm-pix', { sessionId: session, fail: true });
-  $('doneMsg').textContent = '⚠ Pagamento NÃO efetuado — devolva as cédulas ao cliente.';
-  show('done');
-}
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js">
+</script>
+<script>
 
 function copyPixCode() {
   const st = document.getElementById('copyStatus');
@@ -242,8 +191,6 @@ function fallbackCopy(t) {
   }
   try { return document.execCommand('copy'); } catch (e) { return false; }
 }
-</script>
-<script>
 let session = null;
 const $ = (id) => document.getElementById(id);
 
@@ -280,7 +227,8 @@ async function wdStart() {
   session = j.sessionId;
   $('wdState').textContent = 'SAQUE — cobrança gerada';
   $('wdQr').classList.remove('hidden');
-  $('wdCharge').textContent = 'Cliente paga ' + brl(j.totalCents) + ' (' + brl(j.amountCents) + ' + taxa ' + brl(j.feeCents) + ')';
+  const amtCents = j.amountCents != null ? j.amountCents : (j.totalCents - j.feeCents);
+  $('wdCharge').textContent = 'Cliente paga ' + brl(j.totalCents) + ' (' + brl(amtCents) + ' + taxa ' + brl(j.feeCents) + ')';
   const box = $('qrbox'); box.innerHTML = '';
   const link = $('wdOpenLink');
   if (wdMethod === 'card' && j.checkoutUrl) {
